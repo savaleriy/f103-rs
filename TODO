@@ -1,0 +1,86 @@
+
+Simple algorithm to control power system.
+
+```c++
+#include <Arduino.h>
+int DCDC = 0;
+int ACDC = 0;
+int LEDcom = 0;
+int blocker = 0;
+
+
+void setup() {
+ 
+
+  pinMode(PB0, OUTPUT); // ACDC
+  pinMode(PB1, OUTPUT); // DCDC
+  pinMode(PC13, OUTPUT); // LED
+  pinMode(PA4, INPUT_ANALOG); // ADC
+  Serial.begin(115200);
+}
+
+void loop() {
+
+
+  DCDC = 0; // Флаг питания от DCDC
+  ACDC = 0; // Флаг питания от ACDC
+
+  int Va = analogRead(PA0); 
+
+  if(Va > 300){ // 300 ~ 0.76V Если напряжение, измеряемое на выходе DCDC, через делитель, есть хоть какое-то, то активируем флаг DCDC
+    LEDcom = 1; // Флаг, регламентирующий поведение светодиода
+    DCDC = 1; // Флаг питания от DCDC
+    ACDC = 0; // Флаг питания от ACDC
+  }else{
+    LEDcom = 2; // Флаг, регламентирующий поведение светодиода
+    DCDC = 0; // Флаг питания от DCDC
+    ACDC = 1; // Флаг питания от ACDC
+  }
+ 
+  if(blocker == 3){ // Если нужно принудительно отключить питание то присваиваем  blocker = 3
+    ACDC = 0;
+    DCDC = 0;
+    LEDcom = 0;
+  }else if(blocker == 2){ // Если нужно принудительно включить питание от ACDC то присваиваем  blocker = 2
+    ACDC = 1;
+    DCDC = 0;
+    LEDcom = 2;
+  }else if(blocker == 1){ // Если нужно принудительно включить питание от DCDC то присваиваем  blocker = 1 
+    ACDC = 0;
+    DCDC = 1;
+    LEDcom = 1;
+  }
+
+  
+  
+  if(LEDcom == 1){ // Если питаемся от DCDC, то светодиод мигает 1 раз в 0,5 сек
+    digitalWrite(PC13,HIGH);
+    delay(100);
+    digitalWrite(PC13,LOW);
+    delay(500);
+  }else if(LEDcom == 2){ // Если питаемся от ACDC, то светодиод мигает 2 раза в 0,5 сек
+    digitalWrite(PC13,HIGH);
+    delay(100);
+    digitalWrite(PC13,LOW);
+    delay(100);
+    digitalWrite(PC13,HIGH);
+    delay(100);
+    digitalWrite(PC13,LOW);
+    delay(500);
+  }else{ // Если питание выключено, то светодиод выключен
+    digitalWrite(PC13,LOW);
+  }
+
+  if(DCDC == 1){ // Подаем высокий уровень на транзистор, открывающий реле, коммутирующее питание от DCDC (ACDC - закрыт)
+    digitalWrite(PB1, HIGH);
+    digitalWrite(PB0, LOW);
+  }else if(ACDC == 1){ // Подаем высокий уровень на транзистор, открывающий реле, коммутирующее питание от ACDC (DCDC - закрыт)
+    digitalWrite(PB1, LOW);
+    digitalWrite(PB0, HIGH);
+  }else{ // Все транзисторы закрыты, реле закрыты, питание не поступает
+    digitalWrite(PB1, LOW);
+    digitalWrite(PB0, LOW);
+  };
+
+}
+```
