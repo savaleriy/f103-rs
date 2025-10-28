@@ -44,7 +44,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(unwrap!(blinky(p.PC13)));
 
     // Configure PWM pin - PA8 is TIM1_CH1 on STM32F103
-    let pwm_pin: PwmPin<'_, peripherals::TIM1, Ch1, AfioRemap<0>> = 
+    let pwm_pin: PwmPin<'_, peripherals::TIM1, Ch1, AfioRemap<0>> =
         PwmPin::new(p.PA8, OutputType::PushPull);
 
     // Create PWM instance with 1kHz frequency

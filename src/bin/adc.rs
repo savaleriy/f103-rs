@@ -23,7 +23,7 @@ async fn main(_spawner: Spawner) {
 
     // Enable and read VREFINT for accurate voltage reference
     let mut vrefint = adc.enable_vref();
-    
+
     // Take multiple VREFINT readings for stability
     let mut vrefint_sum: u32 = 0;
     for _ in 0..10 {
@@ -37,7 +37,7 @@ async fn main(_spawner: Spawner) {
     let convert_to_millivolts = |sample: u16| -> u32 {
         // From STM32 datasheet - typical VREFINT value is 1.2V
         const VREFINT_MV: u32 = 1200; // mV
-        
+
         // Convert ADC reading to millivolts using VREFINT as reference
         (u32::from(sample) * VREFINT_MV / u32::from(vrefint_sample))
     };
@@ -51,7 +51,7 @@ async fn main(_spawner: Spawner) {
     loop {
         // Take multiple samples for filtering
         let mut samples = [0u16; 300];
-        
+
         // Read raw samples
         for i in 0..num_samples {
             samples[i] = adc.read(&mut pin).await;
@@ -68,7 +68,7 @@ async fn main(_spawner: Spawner) {
         // 2. Running Moving Average Filter (more efficient)
         moving_avg_buffer[moving_avg_index] = samples[num_samples - 1]; // Use last sample
         moving_avg_index = (moving_avg_index + 1) % moving_avg_buffer.len();
-        
+
         let mut running_avg_sum: u32 = 0;
         let buffer_samples = if moving_avg_initialized {
             moving_avg_buffer.len()
@@ -76,16 +76,19 @@ async fn main(_spawner: Spawner) {
             moving_avg_index + 1
         };
 
-        let recent_samples = [samples[num_samples - 3], samples[num_samples - 2], samples[num_samples - 1]];
+        let recent_samples = [
+            samples[num_samples - 3],
+            samples[num_samples - 2],
+            samples[num_samples - 1],
+        ];
         let median_value = median_of_three(recent_samples[0], recent_samples[1], recent_samples[2]);
 
         // Convert all filtered values to millivolts
         let moving_avg_mv = convert_to_millivolts(moving_avg);
         let median_mv = convert_to_millivolts(median_value);
 
-        info!("Simple Avg: {} mV, Median: {} mV", 
-              moving_avg_mv,  median_mv);
-        
+        info!("Simple Avg: {} mV, Median: {} mV", moving_avg_mv, median_mv);
+
         Timer::after_millis(500).await;
     }
 }

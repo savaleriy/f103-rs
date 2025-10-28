@@ -31,18 +31,20 @@ impl From<EndpointError> for Disconnected {
 
 const LF: u8 = b'\n';
 
-async fn echo<'d, T: Instance + 'd>(class: &mut CdcAcmClass<'d, Driver<'d, T>>) -> Result<(), Disconnected> {
+async fn echo<'d, T: Instance + 'd>(
+    class: &mut CdcAcmClass<'d, Driver<'d, T>>,
+) -> Result<(), Disconnected> {
     let mut buf = [0; 64];
     let mut line_buffer = [0; 256]; // Buffer for building the complete line
     let mut line_index = 0;
-    
+
     // Send welcome message
     let welcome_msg = "STM32F103 Blue Pill ready! Type something and press Enter.\r\n";
     class.write_packet(welcome_msg.as_bytes()).await?;
-    
+
     loop {
         let n = class.read_packet(&mut buf).await?;
-        
+
         for &byte in &buf[..n] {
             if line_index >= line_buffer.len() {
                 // Buffer overflow - reset and send error
@@ -54,7 +56,7 @@ async fn echo<'d, T: Instance + 'd>(class: &mut CdcAcmClass<'d, Driver<'d, T>>) 
             // Store the byte
             line_buffer[line_index] = byte;
             line_index += 1;
-            
+
             // Check if we received a newline
             if byte == LF {
                 // Send the complete line back
@@ -64,7 +66,7 @@ async fn echo<'d, T: Instance + 'd>(class: &mut CdcAcmClass<'d, Driver<'d, T>>) 
                 } else {
                     info!("Received binary data: {:x}", line_buffer);
                 }
-                
+
                 // Reset line buffer
                 line_index = 0;
             }
@@ -152,5 +154,3 @@ async fn main(_spawner: Spawner) {
     // If we had made everything `'static` above instead, we could do this using separate tasks instead.
     join(usb_fut, echo_fut).await;
 }
-
-
