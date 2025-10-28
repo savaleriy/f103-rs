@@ -1,7 +1,7 @@
 use defmt::*;
 use embassy_executor::task;
-use embassy_stm32::timer::simple_pwm::SimplePwm;
 use embassy_stm32::peripherals;
+use embassy_stm32::timer::simple_pwm::SimplePwm;
 use embassy_time::Timer;
 
 use crate::shared::SHARED_DUTY;
@@ -18,5 +18,3 @@ pub async fn change_duty_cycle(mut pwm: SimplePwm<'static, peripherals::TIM1>) {
         Timer::after_millis(100).await;
     }
 }
-
-

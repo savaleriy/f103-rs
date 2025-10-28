@@ -91,5 +91,3 @@ pub async fn change_power_source(
         Timer::after_millis(delay as u64).await;
     }
 }
-
-

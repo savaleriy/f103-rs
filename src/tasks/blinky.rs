@@ -23,5 +23,3 @@ pub async fn blinky(led: Peri<'static, peripherals::PC13>, initial_delay: u64) {
         Timer::after_millis(current_delay).await;
     }
 }
-
-

@@ -48,5 +48,3 @@ fn create_voltage_converter(vrefint_sample: u16) -> impl Fn(u16) -> u32 {
     const VREFINT_MV: u32 = 1200;
     move |sample: u16| -> u32 { u32::from(sample) * VREFINT_MV / u32::from(vrefint_sample) }
 }
-
-

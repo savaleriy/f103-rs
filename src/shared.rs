@@ -9,5 +9,3 @@ pub static SHARED_MESSAGE: Signal<ThreadModeRawMutex, u32> = Signal::new();
 
 // Channel to change LED delay dynamically
 pub static DELAY_CHANNEL: Channel<ThreadModeRawMutex, u64, 4> = Channel::new();
-
-
