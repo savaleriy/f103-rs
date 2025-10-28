@@ -5,7 +5,7 @@ use defmt::*;
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::usart::{BufferedUart, Config};
-use embassy_stm32::{bind_interrupts, peripherals, usart};
+use embassy_stm32::{bind_interrupts, peripherals, usart, Peri};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_time::{Duration, Timer};
@@ -24,6 +24,23 @@ extern crate alloc;
 
 use {defmt_rtt as _, panic_probe as _};
 
+// Backing memory for the global allocator (TLSF)
+// Adjust size as needed depending on expected dynamic allocations
+#[link_section = ".uninit"]
+static mut HEAP_MEM: [u8; 8 * 1024] = [0; 8 * 1024];
+
+bind_interrupts!(struct Irqs {
+    USART1 => usart::BufferedInterruptHandler<peripherals::USART1>;
+});
+
+// Static buffers for UART (fixed lifetime issues)
+static mut TX_BUF: [u8; 256] = [0; 256];
+static mut RX_BUF: [u8; 256] = [0; 256];
+
+// Channel to send messages from RX to TX
+static TX_MESSAGE_CHANNEL: Channel<ThreadModeRawMutex, heapless::String<64>, 4> = Channel::new();
+static LED_CHANNEL: Channel<ThreadModeRawMutex, LedState, 4> = Channel::new();
+
 // Example of SIMPLE DEVICE
 struct MyDevice;
 impl Device for MyDevice {
@@ -32,8 +49,8 @@ impl Device for MyDevice {
     }
 }
 
-struct HelloWorldCommand;
-impl Command<MyDevice> for HelloWorldCommand {
+struct IdnCommand;
+impl Command<MyDevice> for IdnCommand {
     // Allow only queries
     cmd_qonly!();
 
@@ -56,58 +73,58 @@ impl Command<MyDevice> for LedToggleCommand {
         &self,
         _device: &mut MyDevice,
         _context: &mut Context,
-        mut params: Parameters,
+        _params: Parameters,
     ) -> Result<(), Error> {
-        let arg: Option<&str> = params.next_optional_data()?;
-        match arg {
-            Some("ON") | None => {
-                info!("SCPI : ON");
-                let _ = LED_CHANNEL.try_send(LedState::On);
-                Ok(())
-            }
-            Some("OFF") => {
-                info!("SCPI : OFF");
-                let _ = LED_CHANNEL.try_send(LedState::Off);
-                Ok(())
-            }
-            Some("TOGGLE") => {
-                info!("SCPI : TOGGLE");
-                let _ = LED_CHANNEL.try_send(LedState::Toggle);
-                Ok(())
-            }
-            _ => Ok(()),
-        }
+        info!("SCPI : TOGGLE");
+        let _ = LED_CHANNEL.try_send(LedState::Toggle);
+        Ok(())
+    }
+}
+
+struct LedOnCommand;
+impl Command<MyDevice> for LedOnCommand {
+    cmd_nquery!();
+    fn event(
+        &self,
+        _device: &mut MyDevice,
+        _context: &mut Context,
+        _params: Parameters,
+    ) -> Result<(), Error> {
+        info!("SCPI : ON");
+        let _ = LED_CHANNEL.try_send(LedState::On);
+        Ok(())
+    }
+}
+
+struct LedOffCommand;
+impl Command<MyDevice> for LedOffCommand {
+    cmd_nquery!();
+    fn event(
+        &self,
+        _device: &mut MyDevice,
+        _context: &mut Context,
+        _params: Parameters,
+    ) -> Result<(), Error> {
+        info!("SCPI : OFF");
+        let _ = LED_CHANNEL.try_send(LedState::Off);
+        Ok(())
     }
 }
 
 // Basic commands
-// *IDN? -> STM32F103 Embassy!
+// *IDN?      -> STM32F103 Embassy!
 // LED:TOGGle -> Toggle led
-// LED:ON -> On led
-// LED:OFF -> Off led
+// LED:ON     -> On led
+// LED:OFF    -> Off led
 
 const MYTREE: Node<MyDevice> = Root![
-    Leaf!(b"*IDN" => &HelloWorldCommand),
+    Leaf!(b"*IDN" => &IdnCommand),
     Branch![b"LED";
         Leaf!(default b"TOGGle" => &LedToggleCommand),
-        Leaf!(default b"ON" => &LedToggleCommand),
-        Leaf!(default b"OFF" => &LedToggleCommand)
+        Leaf!(default b"ON" => &LedOnCommand),
+        Leaf!(default b"OFF" => &LedOffCommand)
     ]
 ];
-
-bind_interrupts!(struct Irqs {
-    USART1 => usart::BufferedInterruptHandler<peripherals::USART1>;
-});
-
-// Static buffers for UART (fixed lifetime issues)
-static mut TX_BUF: [u8; 256] = [0; 256];
-static mut RX_BUF: [u8; 256] = [0; 256];
-
-// Channel to send messages from RX to TX
-static TX_MESSAGE_CHANNEL: Channel<ThreadModeRawMutex, heapless::String<64>, 4> = Channel::new();
-
-// Channel for LED control
-static LED_CHANNEL: Channel<ThreadModeRawMutex, LedState, 4> = Channel::new();
 
 #[derive(Debug, Clone, Copy)]
 enum LedState {
@@ -117,7 +134,9 @@ enum LedState {
 }
 
 #[embassy_executor::task]
-async fn toggle_led(mut led: Output<'static>) {
+async fn blinky(led: Peri<'static, peripherals::PC13>) {
+    let mut led = Output::new(led, Level::High, Speed::Low);
+
     loop {
         match LED_CHANNEL.receive().await {
             LedState::Toggle => {
@@ -125,14 +144,15 @@ async fn toggle_led(mut led: Output<'static>) {
                 info!("Toggle LED");
             }
             LedState::On => {
-                led.set_high();
+                led.set_low();
                 info!("LED On");
             }
             LedState::Off => {
-                led.set_low();
+                led.set_high();
                 info!("LED Off");
             }
         }
+        Timer::after(Duration::from_millis(100)).await;
     }
 }
 
@@ -140,7 +160,6 @@ async fn toggle_led(mut led: Output<'static>) {
 async fn rx_task(
     mut rx: embassy_stm32::usart::BufferedUartRx<'static>,
     tx_sender: Sender<'static, ThreadModeRawMutex, heapless::String<64>, 4>,
-    led_sender: Sender<'static, ThreadModeRawMutex, LedState, 4>,
 ) {
     let mut buf = [0u8; 64];
     let mut pos = 0;
@@ -153,7 +172,7 @@ async fn rx_task(
         let mut byte = [0u8; 1];
         if let Ok(()) = rx.read_exact(&mut byte).await {
             let b = byte[0];
-
+            info!("Get message");
             if pos >= buf.len() {
                 info!("RX buffer overflow, resetting");
                 pos = 0;
@@ -181,33 +200,39 @@ async fn rx_task(
                             }
                         }
 
-                        // In this part of code we should run MYTREE.run
+                        // Run SCPI command tree
                         info!("Received");
-
-                        let mut echo_string = String::<64>::new();
-                        echo_string.push_str(&received_string).unwrap();
-                        echo_string.push_str("\r\n").unwrap();
 
                         let command = received_string;
 
                         let mut context = Context::default();
-                        // panic at alloc in Embedded
-                        let mut response = Vec::new();
+                        let mut response: Vec<u8> = Vec::new();
 
                         let res = MYTREE.run(
-                            &command.into_bytes(),
+                            &command.as_bytes(),
                             &mut device,
                             &mut context,
                             &mut response,
                         );
 
-                        // if command == "led on" {
-                        //     led_sender.send(LedState::On).await;
-                        // } else if command == "led off" {
-                        //     led_sender.send(LedState::Off).await;
-                        // } else if command == "led toggle" || command == "toggle" {
-                        //     led_sender.send(LedState::Toggle).await;
-                        // }
+                        match res {
+                            Ok(()) => {
+                                // Forward response to TX task (ASCII-only for this demo)
+                                let mut out = String::<64>::new();
+                                for &b in response.as_slice() {
+                                    if out.push(b as char).is_err() {
+                                        break;
+                                    }
+                                }
+                                let _ = tx_sender.try_send(out);
+                            }
+                            Err(e) => {
+                                warn!("SCPI run error");
+                                let mut out = String::<64>::new();
+                                let _ = out.push_str("ERR\r\n");
+                                let _ = tx_sender.try_send(out);
+                            }
+                        }
                     }
                 }
                 pos = 0; // reset buffer
@@ -242,7 +267,12 @@ async fn tx_task(
 }
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
+    // Initialize allocator before any use of heap (Vec, Box, etc.)
+    unsafe {
+        HEAP.init(HEAP_MEM.as_ptr() as usize, HEAP_MEM.len());
+    }
+
     let p = embassy_stm32::init(Default::default());
 
     let mut config = Config::default();
@@ -262,19 +292,15 @@ async fn main(_spawner: Spawner) {
         .unwrap()
     };
 
-    let (mut tx, mut rx) = usart.split();
-
-    let _ = tx.write_all(b"led toggle\r\n").await;
-    let led = Output::new(p.PC13, Level::High, Speed::Low);
+    let (tx, rx) = usart.split();
 
     // Get senders/receivers
     let tx_sender = TX_MESSAGE_CHANNEL.sender();
     let tx_receiver = TX_MESSAGE_CHANNEL.receiver();
-    let led_sender = LED_CHANNEL.sender();
 
-    _spawner.spawn(rx_task(rx, tx_sender, led_sender).unwrap());
-    _spawner.spawn(tx_task(tx, tx_receiver).unwrap());
-    _spawner.spawn(toggle_led(led).unwrap());
+    spawner.spawn(rx_task(rx, tx_sender).unwrap());
+    spawner.spawn(tx_task(tx, tx_receiver).unwrap());
+    spawner.spawn(blinky(p.PC13).unwrap());
 
     loop {
         Timer::after(Duration::from_secs(10)).await;
