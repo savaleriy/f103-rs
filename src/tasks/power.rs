@@ -4,14 +4,9 @@ use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::{peripherals, Peri};
 use embassy_time::Timer;
 
-use crate::shared::{DELAY_CHANNEL, SHARED_ADC_VALUE, SHARED_MESSAGE};
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PowerState {
-    DCDC,
-    ACDC,
-    OFF,
-}
+use crate::shared::{
+    PowerState, DELAY_CHANNEL, POWER_CHANNEL, POWER_STATUS, SHARED_ADC_VALUE, SHARED_MESSAGE,
+};
 
 impl PowerState {
     pub const ACDC_THRESHOLD: u32 = 760;
@@ -73,6 +68,19 @@ pub async fn change_power_source(
     let mut previous_state: Option<PowerState> = None;
 
     loop {
+        // Check for SCPI power commands first
+        if let Ok(scpi_command) = POWER_CHANNEL.try_receive() {
+            info!("Received SCPI power command: {:?}", scpi_command);
+            scpi_command.set_pins(&mut acdc_output, &mut dcdc_output);
+            POWER_STATUS.signal(scpi_command);
+
+            let led_delay = scpi_command.get_led_delay();
+            let _ = DELAY_CHANNEL.try_send(led_delay);
+
+            previous_state = Some(scpi_command);
+            continue;
+        }
+
         let voltage = SHARED_ADC_VALUE.wait().await;
         let message = SHARED_MESSAGE.wait().await;
         info!("Get voltage {}", voltage);
@@ -81,6 +89,7 @@ pub async fn change_power_source(
 
         if previous_state != Some(state) {
             state.set_pins(&mut acdc_output, &mut dcdc_output);
+            POWER_STATUS.signal(state);
 
             let led_delay = state.get_led_delay();
             let _ = DELAY_CHANNEL.try_send(led_delay);
